@@ -48,7 +48,7 @@ An intelligent AI-powered resume analyzer that provides detailed ATS (Applicant 
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/ats-resume-analyzer.git
+git clone https://github.com/Darshan-aiml/ats-resume-analyzer.git
 cd ats-resume-analyzer
 
 # Install dependencies
