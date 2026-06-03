@@ -1,5 +1,19 @@
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Sanitize inputs to redact likely API keys or secrets pasted into resume or job description text.
+const sanitizeText = (text) => {
+  if (!text || typeof text !== "string") return text;
+  let t = text;
+  // Google API key pattern (starts with AIza)
+  t = t.replace(/AIza[0-9A-Za-z_-]{35,}/g, "[REDACTED_API_KEY]");
+  // OpenAI-style secret key (sk-...)
+  t = t.replace(/sk-[A-Za-z0-9]{32,}/g, "[REDACTED_API_KEY]");
+  // Generic long-looking token (alphanumeric with punctuation, 40+ chars)
+  t = t.replace(/[A-Za-z0-9\-_=]{40,}/g, "[REDACTED_TOKEN]");
+  // If we redacted anything, warn in server console (avoid echoing secrets to logs)
+  return t;
+};
+
 const keywordLibrary = [
   "product",
   "roadmap",
@@ -122,8 +136,8 @@ Focus on:
 };
 
 const parseGeminiAnalysis = async (resumeText) => {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  const model = import.meta.env.VITE_GEMINI_MODEL || "gemini-2.5-flash";
+  const apiKey = (import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) || undefined;
+  const model = (import.meta.env && import.meta.env.VITE_GEMINI_MODEL) || "gemini-2.5-flash";
 
   if (!apiKey) {
     return null;
@@ -164,12 +178,16 @@ const parseGeminiAnalysis = async (resumeText) => {
   }
 };
 
-export async function analyzeResume(resumeText) {
+export async function analyzeResume(resumeText, jobDescription = null) {
   await delay(600);
 
   if (!resumeText) {
     throw new Error("Upload a PDF or TXT resume so we can analyze the content.");
   }
+
+  // sanitize pasted texts to avoid processing leaked secrets
+  resumeText = sanitizeText(resumeText);
+  jobDescription = sanitizeText(jobDescription);
 
   const cleaned = cleanText(resumeText);
   const wordCount = cleaned.split(" ").filter(Boolean).length;
@@ -177,24 +195,38 @@ export async function analyzeResume(resumeText) {
   const avgSentenceLength = sentences.length
     ? Math.round(wordCount / sentences.length)
     : 0;
-  const keywordMatches = findKeywordMatches(cleaned);
+  // Determine target keywords: either a curated library or tokens from a provided job description
+  const jobTokens = jobDescription ? tokenize(jobDescription).filter(Boolean) : [];
+  const targetKeywords = jobTokens.length ? Array.from(new Set(jobTokens)).slice(0, 50) : keywordLibrary;
+  const keywordMatches = targetKeywords.filter((keyword) => cleaned.toLowerCase().includes(keyword.toLowerCase()));
   const metrics = getMetrics(cleaned);
 
   // Get intelligent analysis from Gemini if available
   const geminiAnalysis = await parseGeminiAnalysis(resumeText);
   const sectionsReviewed = detectSections(cleaned);
 
-  const keywordScore = clamp(Math.round((keywordMatches.length / keywordLibrary.length) * 35), 0, 35);
+  const keywordScore = clamp(
+    Math.round((keywordMatches.length / (targetKeywords.length || keywordLibrary.length)) * 35),
+    0,
+    35
+  );
   const metricScore = clamp(metrics.length * 4, 0, 20);
   const structureScore = clamp(sectionsReviewed.length * 4, 0, 20);
   const readabilityScore = scoreReadability(avgSentenceLength);
   const lengthScore = scoreLength(wordCount);
 
-  const atsScore = clamp(
+  const atsScoreLocal = clamp(
     keywordScore + metricScore + structureScore + readabilityScore + lengthScore,
     0,
     100
   );
+
+  // If a job description was provided, compute a role-alignment score (0-100)
+  let roleAlignment = null;
+  if (jobTokens.length) {
+    const overlapRatio = targetKeywords.length ? keywordMatches.length / targetKeywords.length : 0;
+    roleAlignment = Math.round(overlapRatio * 100);
+  }
 
   const highlights = [
     keywordMatches.length
@@ -318,10 +350,12 @@ export async function analyzeResume(resumeText) {
     return (impactOrder[a.severity] || 1) - (impactOrder[b.severity] || 1);
   });
 
+  const finalAts = clamp(atsScoreLocal + atsLift, 0, 100);
+
   return {
-    atsScore: clamp(atsScore + atsLift, 0, 100),
+    atsScore: finalAts,
     summary:
-      atsScore >= 85
+      finalAts >= 85
         ? "Your resume reads as high-fit with solid structure and measurable impact."
         : "Your resume has strong fundamentals with clear opportunities to boost ATS match.",
     highlights,
@@ -335,6 +369,7 @@ export async function analyzeResume(resumeText) {
       wordCount,
       sentenceCount: sentences.length || 1,
     },
+    roleAlignment,
     breakdown: [
       {
         label: "Keyword alignment",
@@ -384,25 +419,34 @@ export async function analyzeResume(resumeText) {
   };
 }
 
-const buildRagSnippets = (question, resumeText) => {
-  const sentences = splitSentences(resumeText);
+const buildRagSnippets = (question, resumeText, jobDescription = null) => {
+  const resumeSentences = splitSentences(resumeText);
+  const jdSentences = jobDescription ? splitSentences(jobDescription) : [];
   const questionTokens = new Set(tokenize(question));
 
-  const scored = sentences
-    .map((sentence) => {
-      const tokens = tokenize(sentence);
-      const overlap = tokens.filter((token) => questionTokens.has(token));
-      return {
-        sentence,
-        score: overlap.length,
-      };
-    })
-    .filter((item) => item.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3)
-    .map((item) => item.sentence);
+  const scoreSentences = (sentences) =>
+    sentences
+      .map((sentence) => {
+        const tokens = tokenize(sentence);
+        const overlap = tokens.filter((token) => questionTokens.has(token));
+        return {
+          sentence,
+          score: overlap.length,
+        };
+      })
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map((item) => item.sentence);
 
-  return scored.length ? scored : sentences.slice(0, 3);
+  // Prefer resume snippets, fall back to job description snippets, then generic top resume sentences
+  const scoredResume = scoreSentences(resumeSentences);
+  if (scoredResume.length) return scoredResume;
+
+  const scoredJD = scoreSentences(jdSentences);
+  if (scoredJD.length) return scoredJD;
+
+  return resumeSentences.slice(0, 3);
 };
 
 const buildGeminiPrompt = (question, snippets) => {
@@ -413,7 +457,7 @@ const buildGeminiPrompt = (question, snippets) => {
     `Respond with 2-4 sentences. Include a short actionable recommendation.`;
 };
 
-export async function askResumeQuestion(question, resumeText) {
+export async function askResumeQuestion(question, resumeText, jobDescription = null) {
   await delay(400);
 
   if (!resumeText) {
@@ -424,9 +468,57 @@ export async function askResumeQuestion(question, resumeText) {
     throw new Error("Ask a focused question about your resume.");
   }
 
-  const snippets = buildRagSnippets(question, resumeText);
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  const model = import.meta.env.VITE_GEMINI_MODEL || "gemini-2.5-flash";
+  // sanitize inputs to avoid accidental leakage of secrets
+  question = sanitizeText(question);
+  resumeText = sanitizeText(resumeText);
+  jobDescription = sanitizeText(jobDescription);
+
+  // Quick extraction path for factual questions (e.g., candidate name)
+  const isNameQuestion = (q) => /\b(name of (the )?candidate|what(?:'| i)?s the name|who is the candidate|candidate name)\b/i.test(q);
+
+  const extractName = (text) => {
+    if (!text) return null;
+    // Try explicit labels first
+    const labelPatterns = [
+      /\bName[:\-]\s*([A-Z][A-Za-z]+(?:[ \t]+[A-Z][A-Za-z]+){0,3})/m,
+      /\bFull Name[:\-]\s*([A-Z][A-Za-z]+(?:[ \t]+[A-Z][A-Za-z]+){0,3})/m,
+      /\bCandidate[:\-]\s*([A-Z][A-Za-z]+(?:[ \t]+[A-Z][A-Za-z]+){0,3})/m,
+    ];
+
+    for (const re of labelPatterns) {
+      const m = text.match(re);
+      if (m && m[1]) return { name: m[1].trim(), snippet: m[0].trim(), method: 'label' };
+    }
+
+    // Try first-line heuristic: single line at top with 2-3 capitalized words
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length) {
+      const first = lines[0];
+      const firstMatch = first.match(/^([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})$/);
+      if (firstMatch && firstMatch[1]) return { name: firstMatch[1].trim(), snippet: first, method: 'firstline' };
+    }
+
+    return null;
+  };
+
+  if (isNameQuestion(question)) {
+    const found = extractName(resumeText);
+    if (found) {
+      const confidence = found.method === 'label' ? 0.95 : 0.7;
+      return {
+        answer: found.name,
+        sources: ["Resume context (RAG)"],
+        snippets: [found.snippet],
+        engineLabel: "RAG extract",
+        confidence,
+      };
+    }
+    // fall through to normal RAG behavior if extraction fails
+  }
+
+  const snippets = buildRagSnippets(question, resumeText, jobDescription);
+  const apiKey = (import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) || undefined;
+  const model = (import.meta.env && import.meta.env.VITE_GEMINI_MODEL) || "gemini-2.5-flash";
 
   if (apiKey) {
     try {

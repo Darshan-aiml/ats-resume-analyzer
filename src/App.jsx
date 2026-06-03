@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import Hero from "./components/Hero";
 import UploadSection from "./components/UploadSection";
 import ScoreSection from "./components/ScoreSection";
-import SuggestionsSection from "./components/SuggestionsSection";
+// SuggestionsSection removed per request
 import ChatSection from "./components/ChatSection";
 import Footer from "./components/Footer";
 import { analyzeResume, askResumeQuestion } from "./api/mockApi";
@@ -17,12 +17,13 @@ const scrollToId = (id) => {
 
 export default function App() {
   const [file, setFile] = useState(null);
+  const [jobDescription, setJobDescription] = useState("");
   const [analysis, setAnalysis] = useState(null);
   const [resumeText, setResumeText] = useState("");
   const defaultModel = import.meta.env.VITE_GEMINI_MODEL || "gemini-2.5-flash";
   const defaultLabel = import.meta.env.VITE_GEMINI_API_KEY
     ? `Gemini (${defaultModel}) · RAG grounded`
-    : `Gemini (${defaultModel}) · Set VITE_GEMINI_API_KEY to enable`;
+    : `Local fallback · RAG grounded`;
   const [engineLabel, setEngineLabel] = useState(defaultLabel);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
@@ -35,7 +36,7 @@ export default function App() {
     try {
       const extractedText = await parseResumeFile(file);
       setResumeText(extractedText);
-      const result = await analyzeResume(extractedText);
+      const result = await analyzeResume(extractedText, jobDescription);
       setAnalysis(result);
       scrollToId("score");
     } catch (error) {
@@ -48,7 +49,7 @@ export default function App() {
   const handleAsk = async (question) => {
     setIsChatting(true);
     try {
-      const response = await askResumeQuestion(question, resumeText);
+      const response = await askResumeQuestion(question, resumeText, jobDescription);
       if (response.engineLabel) {
         setEngineLabel(response.engineLabel);
       }
@@ -100,12 +101,13 @@ export default function App() {
       <UploadSection
         file={file}
         setFile={setFile}
+        jobDescription={jobDescription}
+        setJobDescription={setJobDescription}
         onAnalyze={handleAnalyze}
         isLoading={isAnalyzing}
         error={analysisError}
       />
       <ScoreSection analysis={analysis} />
-      <SuggestionsSection analysis={analysis} />
       <ChatSection onAsk={handleAsk} isLoading={isChatting} engineLabel={engineLabel} />
 
       <section className="cta">

@@ -4,6 +4,8 @@ import Section from "./Section";
 export default function UploadSection({
   file,
   setFile,
+  jobDescription,
+  setJobDescription,
   onAnalyze,
   isLoading,
   error,
@@ -16,6 +18,15 @@ export default function UploadSection({
       description="Drop your resume and let Nova parse structure, wording, and ATS signals in seconds."
     >
       <div className="upload-card">
+        <label className="job-desc">
+          <p className="job-desc-label">Paste job description</p>
+          <textarea
+            value={jobDescription}
+            onChange={(e) => setJobDescription(e.target.value)}
+            placeholder="Paste the target job description here to get role-aligned ATS scoring."
+            rows={6}
+          />
+        </label>
         <label className="file-drop">
           <input
             type="file"

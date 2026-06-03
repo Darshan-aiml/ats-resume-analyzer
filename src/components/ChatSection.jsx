@@ -21,7 +21,16 @@ export default function ChatSection({ onAsk, isLoading, engineLabel }) {
 
     try {
       const response = await onAsk(nextQuestion);
-      setMessages((prev) => [...prev, { role: "assistant", text: response.answer, sources: response.sources }]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text: response.answer,
+          sources: response.sources,
+          snippets: response.snippets,
+          confidence: response.confidence,
+        },
+      ]);
     } catch (error) {
       setMessages((prev) => [...prev, { role: "assistant", text: error.message || "Something went wrong." }]);
     }
@@ -40,6 +49,9 @@ export default function ChatSection({ onAsk, isLoading, engineLabel }) {
           {messages.map((message, index) => (
             <div key={`${message.role}-${index}`} className={`chat-bubble ${message.role}`}>
               <p>{message.text}</p>
+              {message.confidence != null ? (
+                <div className="chat-confidence">Confidence: {(message.confidence * 100).toFixed(0)}%</div>
+              ) : null}
               {message.sources ? (
                 <div className="chat-sources">
                   {message.sources.map((source) => (
@@ -50,7 +62,7 @@ export default function ChatSection({ onAsk, isLoading, engineLabel }) {
               {message.snippets ? (
                 <div className="chat-snippets">
                   {message.snippets.map((snippet, snippetIndex) => (
-                    <p key={`${snippet}-${snippetIndex}`}>{snippet}</p>
+                    <p key={`${snippet}-${snippetIndex}`} className="chat-snippet-highlight">{snippet}</p>
                   ))}
                 </div>
               ) : null}

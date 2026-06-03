@@ -18,6 +18,13 @@ export default function ScoreSection({ analysis }) {
             </div>
           </div>
           <p className="score-summary">{analysis?.summary ?? "Upload a resume to see your personalized score."}</p>
+          {analysis?.roleAlignment != null ? (
+            <div className="alignment-indicator">
+              <p className="alignment-label">Role alignment</p>
+              <p className="alignment-value">{analysis.roleAlignment}%</p>
+              <p className="alignment-note">How closely your resume matches the pasted job description</p>
+            </div>
+          ) : null}
           {analysis?.estimatedLift ? (
             <div className="lift-indicator">
               <p className="lift-label">Potential improvement</p>

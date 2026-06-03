@@ -48,10 +48,6 @@ export default function SuggestionsSection({ analysis }) {
             </div>
 
             <div className="suggestion-actions">
-              <button className="suggestion-button primary">
-                <span className="button-icon">✏️</span>
-                Edit Resume
-              </button>
               <button className="suggestion-button secondary">
                 <span className="button-icon">✨</span>
                 See Example
